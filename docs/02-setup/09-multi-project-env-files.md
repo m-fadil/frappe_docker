@@ -188,6 +188,76 @@ whatever backup exists there (schedule one with `compose.backup-cron.yaml` on th
 run `bench --site ... backup` before restoring); and it restores the database only, not public
 or private files.
 
+## Making a restored copy safe to run
+
+A database restored from production still contains production's outbound configuration. Left
+alone, a staging bench will send real invoices to real customers, fire webhooks at live
+endpoints, and poll the production mailbox. `overrides/compose.sanitize.yaml` switches all of
+that off.
+
+The single most important switch is `mute_emails` in site config, which blocks the email queue
+framework-wide. Set it once on the staging site — `bench restore` replaces the database, not
+`site_config.json`, so it survives every future refresh:
+
+```sh
+docker compose --env-file ~/gitops/.env.staging \
+  exec backend bench --site staging.example.com set-config mute_emails 1
+```
+
+Everything else lives in the database and therefore comes back with each restore. Run the
+sanitize service immediately after a restore:
+
+```sh
+docker compose --env-file ~/gitops/.env.staging \
+  --profile sanitize run --rm sanitize
+```
+
+It sets `mute_emails` (harmless if already set), then disables in the restored database:
+
+| What | Why it matters on a copy |
+| ---- | ------------------------ |
+| Email Account `enable_outgoing`, `default_outgoing` | Sends real mail to real recipients |
+| Email Account `enable_incoming`, `default_incoming` | Polls the production mailbox and marks messages read |
+| `Email Queue` rows | Production's unsent backlog would flush on the copy |
+| Webhooks | Fires at live third-party endpoints |
+| Notifications | Document-event alerts to real users |
+| Auto Repeat | Keeps generating recurring documents |
+| Single doctypes listed in `SANITIZE_SINGLES` | Push notifications, calls and SMS to real devices |
+
+It finishes by printing a count of anything still enabled — every row should read `0`.
+
+App-specific integrations are configured per project rather than hardcoded. `SANITIZE_SINGLES`
+is a comma-separated list of Single doctypes whose `enabled` field is set to `0`:
+
+```sh
+# ~/gitops/.env.staging
+SANITIZE_SINGLES=FCM Settings,TP Twilio Settings,TP Exotel Settings,My Custom Settings
+```
+
+Single doctypes keep their fields as rows in `tabSingles`, so naming a doctype from an app that
+is not installed matches nothing instead of failing. Spaces around the commas are stripped, and
+setting the variable to an empty string skips the step. Only a field named exactly `enabled` is
+touched; a Single that spells its switch differently needs its own statement.
+
+`SANITIZE_SITE` defaults to `RESTORE_SITE`, so a project env file that already configures the
+restore override needs no extra variable.
+
+> **Note:** The sanitize step writes SQL directly. Saving an Email Account through the ORM makes
+> Frappe connect to the real IMAP/SMTP server to validate the credentials — exactly what is
+> being prevented — so the override bypasses document hooks and clears the cache afterwards.
+
+Between `run --rm restore` finishing and `run --rm sanitize` finishing there is a short window
+where the stack holds production settings. `mute_emails` in site config closes it for outgoing
+mail. To close it for incoming mail as well, refresh with the scheduler paused:
+
+```sh
+docker compose --env-file ~/gitops/.env.staging exec backend \
+  bench --site staging.example.com scheduler pause
+# restore, then sanitize, then
+docker compose --env-file ~/gitops/.env.staging exec backend \
+  bench --site staging.example.com scheduler resume
+```
+
 ## Path resolution
 
 Relative paths in `COMPOSE_FILE` are resolved against the directory you run the command from,
