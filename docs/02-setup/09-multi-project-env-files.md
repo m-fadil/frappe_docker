@@ -155,6 +155,39 @@ docker compose --env-file ~/gitops/.env.erpnext-one \
   exec backend bench --site all migrate
 ```
 
+## Cloning a site from a remote instance
+
+`overrides/compose.restore.yaml` pulls the latest database backup from another Frappe site,
+restores it into a local site and migrates it — useful for refreshing a staging bench from
+production. Add it to the project's `COMPOSE_FILE`, then set:
+
+```sh
+# ~/gitops/.env.erpnext-one
+RESTORE_SITE=staging.example.com
+RESTORE_SOURCE_URL=https://erp.example.com
+RESTORE_TOKEN=<api_key>:<api_secret>
+```
+
+The target site must already exist locally. Run it explicitly — the service is behind the
+`restore` profile, so `up -d` never triggers it:
+
+```sh
+docker compose --env-file ~/gitops/.env.erpnext-one \
+  --profile restore run --rm restore
+```
+
+It calls `frappe.utils.backups.fetch_latest_backups` on the source site, downloads the database
+dump it points to, runs `bench restore --force`, then `bench migrate`.
+
+> **Warning:** This drops the target site's database. Never point `RESTORE_SITE` at a production
+> site. The token needs read access to the source site's private backups, so treat the env file
+> as a credential.
+
+Two things it does not do: it never asks the source site to take a fresh backup, so you get
+whatever backup exists there (schedule one with `compose.backup-cron.yaml` on the source, or
+run `bench --site ... backup` before restoring); and it restores the database only, not public
+or private files.
+
 ## Path resolution
 
 Relative paths in `COMPOSE_FILE` are resolved against the directory you run the command from,
