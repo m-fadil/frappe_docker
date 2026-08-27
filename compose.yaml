@@ -15,11 +15,12 @@ x-backend-defaults: &backend_defaults
   <<: [*depends_on_configurator, *customizable_image]
   volumes:
     - sites:/home/frappe/frappe-bench/sites
-    # Nested on purpose: assets live in their own volume so every build's files
-    # accumulate there (see resources/core/main-entrypoint.sh) and a rolling
-    # update never leaves a frontend unable to serve the hashes a backend
-    # renders. The deeper mount path wins over the `sites` mount above.
-    - assets:/home/frappe/frappe-bench/sites/assets
+    # Assets live in their own volume so every build's files accumulate there
+    # and a rolling update never leaves a frontend unable to serve the hashes a
+    # backend renders. main-entrypoint.sh merges into it and links sites/assets
+    # here — mounting straight onto sites/assets would resolve that existing
+    # symlink and shadow the image's baked assets with the empty volume.
+    - assets:/home/frappe/frappe-bench/shared-assets
 
 services:
   configurator:
@@ -78,7 +79,7 @@ services:
       CLIENT_MAX_BODY_SIZE: ${CLIENT_MAX_BODY_SIZE:-50m}
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - assets:/home/frappe/frappe-bench/sites/assets
+      - assets:/home/frappe/frappe-bench/shared-assets
     depends_on:
       - backend
       - websocket
@@ -97,7 +98,7 @@ services:
       - /home/frappe/frappe-bench/apps/frappe/socketio.js
     volumes:
       - sites:/home/frappe/frappe-bench/sites
-      - assets:/home/frappe/frappe-bench/sites/assets
+      - assets:/home/frappe/frappe-bench/shared-assets
     healthcheck:
       test: ["CMD-SHELL", "test ! -f /tmp/drain && wait-for-it -t 2 localhost:9000"]
       interval: 10s
