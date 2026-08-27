@@ -7,7 +7,7 @@
 #
 #   docker compose --profile restore run --rm restore
 #
-# Required variables: RESTORE_SITE, RESTORE_SOURCE_URL, RESTORE_TOKEN.
+# Required variables: RESTORE_SITE, RESTORE_SOURCE_URL, RESTORE_SOURCE_TOKEN.
 
 # Compose extension fields of base compose.yaml. See https://github.com/frappe/frappe_docker/blob/main/compose.yaml
 # Needed for merging compose files.
@@ -41,15 +41,15 @@ services:
     command:
       - |
         set -euo pipefail
-        if [ -z "$$RESTORE_SITE" ] || [ -z "$$RESTORE_SOURCE_URL" ] || [ -z "$$RESTORE_TOKEN" ]; then
-          echo "[restore] RESTORE_SITE, RESTORE_SOURCE_URL and RESTORE_TOKEN are required"
+        if [ -z "$$RESTORE_SITE" ] || [ -z "$$RESTORE_SOURCE_URL" ] || [ -z "$$RESTORE_SOURCE_TOKEN" ]; then
+          echo "[restore] RESTORE_SITE, RESTORE_SOURCE_URL and RESTORE_SOURCE_TOKEN are required"
           exit 1
         fi
         if [ ! -f "sites/$$RESTORE_SITE/site_config.json" ]; then
           echo "[restore] Site $$RESTORE_SITE does not exist locally, create it first"
           exit 1
         fi
-        auth="Authorization: token $$RESTORE_TOKEN"
+        auth="Authorization: $$RESTORE_SOURCE_TOKEN"
         echo "[restore] Fetching latest backup metadata from $$RESTORE_SOURCE_URL"
         db_path=$$(curl -fsS -H "$$auth" "$$RESTORE_SOURCE_URL/api/method/frappe.utils.backups.fetch_latest_backups" | jq -r '.message.database // empty')
         if [ -z "$$db_path" ]; then
@@ -58,17 +58,19 @@ services:
         fi
         file=$$(basename "$$db_path")
         echo "[restore] Downloading $$file"
-        curl -fsS -H "$$auth" -o "/tmp/$$file" "$$RESTORE_SOURCE_URL/private/backups/$$file"
+        aria2c -q --no-conf -x 4 -s 4 -c --header="$$auth" -d "/tmp" -o "$$file" "$$RESTORE_SOURCE_URL/backups/$$file"
         echo "[restore] Restoring into $$RESTORE_SITE, existing data is dropped"
         bench --site "$$RESTORE_SITE" restore "/tmp/$$file" --db-root-username "$$DB_ROOT_USER" --db-root-password "$$DB_PASSWORD" --force
         echo "[restore] Migrating $$RESTORE_SITE"
         bench --site "$$RESTORE_SITE" migrate
+        bench --site "$$RESTORE_SITE" set-admin-password "$$RESTORE_ADMIN_PASSWORD"
         rm -f "/tmp/$$file"
         echo "[restore] Done"
     environment:
       RESTORE_SITE: ${RESTORE_SITE:-}
       RESTORE_SOURCE_URL: ${RESTORE_SOURCE_URL:-}
-      RESTORE_TOKEN: ${RESTORE_TOKEN:-}
+      RESTORE_SOURCE_TOKEN: ${RESTORE_SOURCE_TOKEN:-}
+      RESTORE_ADMIN_PASSWORD: ${RESTORE_ADMIN_PASSWORD:-admin}
       DB_ROOT_USER: ${DB_ROOT_USER:-root}
       DB_PASSWORD: ${DB_PASSWORD:-123}
     restart: "no"
