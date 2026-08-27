@@ -50,6 +50,12 @@ services:
       GUNICORN_THREADS: ${GUNICORN_THREADS:-4}
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
       GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-120}
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/drain && curl -s -o /dev/null http://localhost:8000/api/method/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   frontend:
     <<: *customizable_image
@@ -70,6 +76,12 @@ services:
     depends_on:
       - backend
       - websocket
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/drain && curl -s -o /dev/null http://localhost:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   websocket:
     <<: [*depends_on_configurator, *customizable_image]
@@ -79,6 +91,12 @@ services:
       - /home/frappe/frappe-bench/apps/frappe/socketio.js
     volumes:
       - sites:/home/frappe/frappe-bench/sites
+    healthcheck:
+      test: ["CMD-SHELL", "test ! -f /tmp/drain && wait-for-it -t 2 localhost:9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   queue-short:
     <<: *backend_defaults
