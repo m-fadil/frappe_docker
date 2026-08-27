@@ -9,7 +9,7 @@ set -eu
 
 ENV_FILE=${1:?Usage: $0 <env-file>}
 
-for service in backend websocket frontend; do
+for service in frontend backend websocket; do
   docker rollout --env-file "$ENV_FILE" "$service" \
     --pre-stop-hook "touch /tmp/drain && sleep 10"
 done
