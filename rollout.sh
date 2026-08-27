@@ -9,16 +9,10 @@ set -eu
 
 ENV_FILE=${1:?Usage: $0 <env-file>}
 
-# Drop the cached asset manifest BEFORE any new container starts, so they read
-# the new build's hashes off disk instead of inheriting the old ones.
-#
-# Two reasons this has to be done by hand, and done first:
-#  - `bench clear-cache` misses it: the key is written shared (plain
-#    `assets_json`) but cleared unshared (`<db_name>|assets_json`).
-#  - Each gunicorn worker also keeps it in process memory for 10 minutes
-#    (ClientCache.local_ttl), so deleting it after a container has already read
-#    the stale value only takes effect on the next restart.
-docker compose --env-file "$ENV_FILE" exec -T redis-cache redis-cli DEL assets_json
+# Migrate with the new image before swapping anything: this one-off container
+# does the slow schema work while the old containers keep serving requests, so
+# the rollout below is only a container swap.
+docker compose --env-file "$ENV_FILE" run --rm backend bench --site all migrate
 
 for service in frontend backend websocket; do
   docker rollout --env-file "$ENV_FILE" "$service" \
@@ -28,4 +22,13 @@ done
 docker compose --env-file "$ENV_FILE" up -d --no-deps \
   configurator queue-short queue-long scheduler
 
+# Frappe caches assets.json in redis and each gunicorn worker keeps its own
+# copy in memory for 10 minutes (ClientCache.local_ttl), so containers can
+# still render the previous build's asset hashes for a while after the swap.
+# Those files stay in the shared assets volume, so they are served fine — this
+# delete only makes the new hashes take effect sooner.
+#
+# It has to be done by hand: the key is written shared (plain `assets_json`)
+# but `bench clear-cache` deletes it unshared, as `<db_name>|assets_json`.
+docker compose --env-file "$ENV_FILE" exec -T redis-cache redis-cli DEL assets_json
 docker compose --env-file "$ENV_FILE" exec -T backend bench --site all clear-cache
