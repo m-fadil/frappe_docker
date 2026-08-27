@@ -38,9 +38,23 @@ if [[ -z "$CLIENT_MAX_BODY_SIZE" ]]; then
   export CLIENT_MAX_BODY_SIZE=50m
 fi
 
+# Read the container's own DNS server rather than assuming Docker's 127.0.0.11 —
+# Podman (aardvark-dns) and custom networks use a different address.
+if [[ -z "$NGINX_RESOLVER" ]]; then
+  NGINX_RESOLVER=$(awk '/^nameserver/ { print $2; exit }' /etc/resolv.conf)
+  if [[ -z "$NGINX_RESOLVER" ]]; then
+    echo "No nameserver in /etc/resolv.conf, NGINX_RESOLVER defaulting to 127.0.0.11"
+    NGINX_RESOLVER=127.0.0.11
+  else
+    echo "NGINX_RESOLVER detected as $NGINX_RESOLVER"
+  fi
+  export NGINX_RESOLVER
+fi
+
 # shellcheck disable=SC2016
 envsubst '${BACKEND}
   ${SOCKETIO}
+  ${NGINX_RESOLVER}
   ${UPSTREAM_REAL_IP_ADDRESS}
   ${UPSTREAM_REAL_IP_HEADER}
   ${UPSTREAM_REAL_IP_RECURSIVE}
